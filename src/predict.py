@@ -1,50 +1,47 @@
 import os
-import joblib
 import pandas as pd
+from sklearn import ensemble
 from sklearn import preprocessing
 from sklearn import metrics
+import joblib
+import numpy as np
 
-# local files
-import config
-import model_dispatcher
-
-
-FOLD = int(os.environ.get("FOLD"))
-MODEL = os.environ.get("MODEL")
-
-if __name__=="__main__":
-    df = pd.read_csv(config.train_folds)
-    train_df = df[df.kfold.isin(config.FOLD_MAPPING.get(FOLD))]
-    valid_df = df[df.kfold==FOLD]
-
-    ytrain = train_df.target.values
-    yvalid = valid_df.target.values
+from . import dispatcher
 
 
-    # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    # specify this in config file (columns to drop)
+def predict(test_data_path, model_type, model_path):
+    df = pd.read_csv(test_data_path)
+    test_idx = df["id"].values
+    predictions = None
 
-    train_df = train_df.drop(["id", "target", "kfold"], axis=1)
-    valid_df = valid_df.drop(["id", "target", "kfold"], axis=1)
+    for FOLD in range(5):
+        df = pd.read_csv(test_data_path)
+        encoders = joblib.load(os.path.join(model_path, f"{model_type}_{FOLD}_label_encoder.pkl"))
+        cols = joblib.load(os.path.join(model_path, f"{model_type}_{FOLD}_columns.pkl"))
+        for c in encoders:
+            lbl = encoders[c]
+            df.loc[:, c] = df.loc[:, c].astype(str).fillna("NONE")
+            df.loc[:, c] = lbl.transform(df[c].values.tolist())
+        
+        clf = joblib.load(os.path.join(model_path, f"{model_type}_{FOLD}.pkl"))
+        
+        df = df[cols]
+        preds = clf.predict_proba(df)[:, 1]
 
+        if FOLD == 0:
+            predictions = preds
+        else:
+            predictions += preds
+    
+    predictions /= 5
 
-    valid_df = valid_df[train_df.columns]
+    sub = pd.DataFrame(np.column_stack((test_idx, predictions)), columns=["id", "target"])
+    return sub
+    
 
-    label_encoders = []
-
-    for c in train_df.columns:
-        lbl = preprocessing.LabelEncoder()
-        lbl.fit(train_df[c].values.tolist() + valid_df[c].values.tolist())
-        train_df.loc[:, c] = lbl.transform(train_df[c].values.tolist())
-        valid_df.loc[:, c] = lbl.transform(valid_df[c].values.tolist())   
-        label_encoders.append((c, lbl))
-
-    # data is ready to train
-    clf =  model_dispatcher.MODELS[MODEL]
-    clf.fit(train_df, ytrain)
-    preds = clf.predict_proba(valid_df)[:, 1]
-    print(metrics.roc_auc_score(yvalid, preds))
-
-
-    joblib.dump(label_encoders, f"../models/{MODEL}_label_encoder.pkl")
-    joblib.dump(clf, f"../models/{MODEL}.pkl")
+if __name__ == "__main__":
+    submission = predict(test_data_path="input/test_cat.csv", 
+                         model_type="randomforest", 
+                         model_path="models/")
+    submission.loc[:, "id"] = submission.loc[:, "id"].astype(int)
+    submission.to_csv(f"models/rf_submission.csv", index=False)
