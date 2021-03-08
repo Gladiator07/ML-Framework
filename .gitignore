@@ -146,3 +146,8 @@ input/
 
 # model files 
 model/
+randomforest_4_.pkl
+randomforest_3_.pkl
+randomforest_2_.pkl
+randomforest_1_.pkl
+randomforest_0_.pkl
